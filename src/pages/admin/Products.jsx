@@ -10,6 +10,22 @@ import {
     validateImageFile,
 } from "../../services/adminProductService";
 import formatPrice from "../../utils/formatPrice";
+import { describeDiscount, getDiscountStatus } from "../../utils/pricing";
+
+// ISO timestamp -> value for <input type="datetime-local"> (local time).
+function toLocalInput(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+const DISCOUNT_STATUS_LABELS = {
+    active: "شغّال",
+    scheduled: "مجدول",
+    expired: "منتهي",
+};
 
 const EMPTY_FORM = {
     name: "",
@@ -17,6 +33,10 @@ const EMPTY_FORM = {
     base_price: "",
     category_id: "",
     is_published: false,
+    discount_type: "",
+    discount_value: "",
+    discount_start_at: "",
+    discount_end_at: "",
 };
 
 function ProductForm({ product, categories, onCancel, onSaved }) {
@@ -30,6 +50,10 @@ function ProductForm({ product, categories, onCancel, onSaved }) {
                   base_price: product.base_price ?? "",
                   category_id: product.category_id ?? "",
                   is_published: Boolean(product.is_published),
+                  discount_type: product.discount_type ?? "",
+                  discount_value: product.discount_value ?? "",
+                  discount_start_at: toLocalInput(product.discount_start_at),
+                  discount_end_at: toLocalInput(product.discount_end_at),
               }
             : EMPTY_FORM
     );
@@ -189,6 +213,114 @@ function ProductForm({ product, categories, onCancel, onSaved }) {
                         className={inputClass}
                     />
                 </div>
+
+                <fieldset className="rounded-lg border border-slate-200 p-4 sm:col-span-2">
+                    <legend className="px-2 text-sm font-semibold text-slate-700">
+                        الخصم على المنتج كله
+                    </legend>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                            <label
+                                htmlFor="product-discount-type"
+                                className="mb-1.5 block text-sm font-semibold text-slate-700"
+                            >
+                                نوع الخصم
+                            </label>
+                            <select
+                                id="product-discount-type"
+                                value={form.discount_type}
+                                onChange={(e) =>
+                                    setField("discount_type", e.target.value)
+                                }
+                                className={inputClass}
+                            >
+                                <option value="">بدون خصم</option>
+                                <option value="percentage">نسبة مئوية (%)</option>
+                                <option value="fixed">مبلغ ثابت (EGP)</option>
+                            </select>
+                        </div>
+
+                        {form.discount_type && (
+                            <div>
+                                <label
+                                    htmlFor="product-discount-value"
+                                    className="mb-1.5 block text-sm font-semibold text-slate-700"
+                                >
+                                    {form.discount_type === "percentage"
+                                        ? "نسبة الخصم (1 – 99)"
+                                        : "قيمة الخصم (EGP)"}
+                                </label>
+                                <input
+                                    id="product-discount-value"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    dir="ltr"
+                                    value={form.discount_value}
+                                    onChange={(e) =>
+                                        setField("discount_value", e.target.value)
+                                    }
+                                    className={`${inputClass} text-start`}
+                                />
+                            </div>
+                        )}
+
+                        {form.discount_type && (
+                            <>
+                                <div>
+                                    <label
+                                        htmlFor="product-discount-start"
+                                        className="mb-1.5 block text-sm font-semibold text-slate-700"
+                                    >
+                                        يبدأ من (اختياري)
+                                    </label>
+                                    <input
+                                        id="product-discount-start"
+                                        type="datetime-local"
+                                        dir="ltr"
+                                        value={form.discount_start_at}
+                                        onChange={(e) =>
+                                            setField(
+                                                "discount_start_at",
+                                                e.target.value
+                                            )
+                                        }
+                                        className={`${inputClass} text-start`}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label
+                                        htmlFor="product-discount-end"
+                                        className="mb-1.5 block text-sm font-semibold text-slate-700"
+                                    >
+                                        ينتهي في (اختياري)
+                                    </label>
+                                    <input
+                                        id="product-discount-end"
+                                        type="datetime-local"
+                                        dir="ltr"
+                                        value={form.discount_end_at}
+                                        onChange={(e) =>
+                                            setField(
+                                                "discount_end_at",
+                                                e.target.value
+                                            )
+                                        }
+                                        className={`${inputClass} text-start`}
+                                    />
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    <p className="mt-3 text-xs text-slate-500">
+                        الخصم بيتطبق على سعر كل ألوان ومقاسات المنتج. بداية
+                        الخصم شاملة ونهايته غير شاملة. لإلغاء الخصم اختار
+                        «بدون خصم» واحفظ.
+                    </p>
+                </fieldset>
 
                 {isEditing && (
                     <p className="text-sm text-slate-500 sm:col-span-2">
@@ -496,6 +628,24 @@ export default function AdminProducts() {
                                         <span dir="ltr" className="inline-block">
                                             {formatPrice(product.base_price)}
                                         </span>
+                                        {getDiscountStatus(product) !== "none" && (
+                                            <span
+                                                className={`ms-2 inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+                                                    getDiscountStatus(product) ===
+                                                    "active"
+                                                        ? "bg-rose-50 text-rose-600"
+                                                        : "bg-slate-100 text-slate-500"
+                                                }`}
+                                            >
+                                                خصم {describeDiscount(product)} (
+                                                {
+                                                    DISCOUNT_STATUS_LABELS[
+                                                        getDiscountStatus(product)
+                                                    ]
+                                                }
+                                                )
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-4 py-3">
                                         {product.variantsCount === 0 ? (

@@ -1,6 +1,8 @@
 
 import { Link } from "react-router";
 import useProducts from "../../hooks/useProducts";
+import PriceTag from "../../components/store/PriceTag";
+import { getListingPriceInfo } from "../../utils/pricing";
 
 import Hero from "../../components/store/home/Hero";
 
@@ -116,9 +118,9 @@ export default function Home() {
                                                 {product.name}
                                             </h3>
 
-                                            <p className="mt-3 text-sm font-extrabold text-slate-900 sm:text-base">
-                                                {Number(product.base_price).toFixed(2)} EGP
-                                            </p>
+                                            <PriceTag
+                                                info={getListingPriceInfo(product)}
+                                            />
                                         </div>
                                     </Link>
                                 </article>

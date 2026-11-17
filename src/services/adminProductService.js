@@ -1,5 +1,136 @@
 import { supabase } from "./supabase";
 
+function normalizeDiscount({
+    discount_type,
+    discount_value,
+    discount_start_at,
+    discount_end_at,
+    price,
+}) {
+    const type = discount_type === "" ? null : discount_type ?? null;
+
+    if (type == null) {
+        return {
+            discount_type: null,
+            discount_value: null,
+            discount_start_at: null,
+            discount_end_at: null,
+        };
+    }
+
+    if (type !== "percentage" && type !== "fixed") {
+        throw new Error("نوع الخصم غير صالح.");
+    }
+
+    const value = Number(discount_value);
+    if (!Number.isFinite(value) || value < 0) {
+        throw new Error("قيمة الخصم لازم تكون رقم أكبر من أو يساوي صفر.");
+    }
+
+    if (type === "percentage" && value > 99) {
+        throw new Error("النسبة المئوية لا يمكن أن تتجاوز 99%.");
+    }
+
+    if (type === "fixed") {
+        if (!(value < Number(price))) {
+            throw new Error("الخصم الثابت لا يمكن أن يساوي أو يتجاوز سعر الـ variant.");
+        }
+    }
+
+    const start = discount_start_at ? new Date(discount_start_at).toISOString() : null;
+    const end = discount_end_at ? new Date(discount_end_at).toISOString() : null;
+    if (start && end && new Date(start) > new Date(end)) {
+        throw new Error("تاريخ البداية لا يمكن أن يكون بعد تاريخ النهاية.");
+    }
+
+    return {
+        discount_type: type,
+        discount_value: value,
+        discount_start_at: start,
+        discount_end_at: end,
+    };
+}
+
+/**
+ * Validates the product-level discount sent by the admin form.
+ * `minPrice` is the cheapest variant price (or base_price when the product has
+ * no variants yet); a fixed discount must stay below it so every variant keeps
+ * a positive price.
+ */
+function normalizeProductDiscount({
+    discount_type,
+    discount_value,
+    discount_start_at,
+    discount_end_at,
+    minPrice,
+}) {
+    const type = discount_type === "" ? null : discount_type ?? null;
+
+    if (type == null) {
+        return {
+            discount_type: null,
+            discount_value: null,
+            discount_start_at: null,
+            discount_end_at: null,
+        };
+    }
+
+    if (type !== "percentage" && type !== "fixed") {
+        throw new Error("نوع الخصم غير صالح.");
+    }
+
+    if (discount_value === "" || discount_value == null) {
+        throw new Error("اكتب قيمة الخصم.");
+    }
+
+    const value = Number(discount_value);
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error("قيمة الخصم لازم تكون رقم أكبر من صفر.");
+    }
+
+    if (type === "percentage" && value > 99) {
+        throw new Error("النسبة المئوية لا يمكن أن تتجاوز 99%.");
+    }
+
+    if (type === "fixed" && !(value < Number(minPrice))) {
+        throw new Error(
+            `الخصم الثابت لازم يكون أقل من أرخص سعر للمنتج (${Number(minPrice)} EGP).`
+        );
+    }
+
+    const start = discount_start_at
+        ? new Date(discount_start_at).toISOString()
+        : null;
+    const end = discount_end_at
+        ? new Date(discount_end_at).toISOString()
+        : null;
+
+    if (start && end && new Date(start) >= new Date(end)) {
+        throw new Error("تاريخ نهاية الخصم لازم يكون بعد تاريخ البداية.");
+    }
+
+    return {
+        discount_type: type,
+        discount_value: value,
+        discount_start_at: start,
+        discount_end_at: end,
+    };
+}
+
+export async function clearVariantDiscount(id) {
+    const { error } = await supabase
+        .from("product_variants")
+        .update({
+            discount_type: null,
+            discount_value: null,
+            discount_start_at: null,
+            discount_end_at: null,
+        })
+        .eq("id", id);
+
+    if (error) throw failure(error, "تعذر مسح الخصم");
+}
+
 export async function getCategories() {
     const { data, error } = await supabase
         .from("categories")
@@ -25,6 +156,10 @@ export async function getAdminProducts() {
             name,
             description,
             base_price,
+            discount_type,
+            discount_value,
+            discount_start_at,
+            discount_end_at,
             is_published,
             category_id,
             categories (id, name),
@@ -90,10 +225,44 @@ function cleanProductFields({
     };
 }
 
+/**
+ * Product columns + (when the form sends them) the product-level discount.
+ * Callers that do not send `discount_type` leave the stored discount untouched.
+ */
+async function buildProductPayload(fields, productId = null) {
+    const payload = cleanProductFields(fields);
+
+    if (fields.discount_type === undefined) {
+        return payload;
+    }
+
+    let minPrice = payload.base_price;
+
+    if (productId != null) {
+        const { data } = await supabase
+            .from("product_variants")
+            .select("price")
+            .eq("product_id", productId);
+
+        const prices = (data ?? [])
+            .map((variant) => Number(variant.price))
+            .filter(Number.isFinite);
+
+        if (prices.length) {
+            minPrice = Math.min(...prices);
+        }
+    }
+
+    return {
+        ...payload,
+        ...normalizeProductDiscount({ ...fields, minPrice }),
+    };
+}
+
 export async function createProduct(fields) {
     const { data, error } = await supabase
         .from("products")
-        .insert(cleanProductFields(fields))
+        .insert(await buildProductPayload(fields))
         .select("id")
         .single();
 
@@ -108,7 +277,7 @@ export async function createProduct(fields) {
 export async function updateProduct(id, fields) {
     const { error } = await supabase
         .from("products")
-        .update(cleanProductFields(fields))
+        .update(await buildProductPayload(fields, id))
         .eq("id", id);
 
     if (error) {
@@ -382,7 +551,16 @@ export async function createVariants(rows) {
     if (error) throw failure(error, "تعذر إضافة الـ variants");
 }
 
-export async function updateVariant(id, { price, stock_quantity, sku, is_available }) {
+export async function updateVariant(id, {
+    price,
+    stock_quantity,
+    sku,
+    is_available,
+    discount_type = undefined,
+    discount_value = undefined,
+    discount_start_at = undefined,
+    discount_end_at = undefined,
+}) {
     const priceNumber = Number(price);
     const stock = Number(stock_quantity);
     const cleanSku = String(sku ?? "").trim();
@@ -399,14 +577,46 @@ export async function updateVariant(id, { price, stock_quantity, sku, is_availab
         throw new Error("الـ SKU مطلوب.");
     }
 
+    // Validate discount vs price (and existing fixed discount on price change).
+    const normalizedDiscount = normalizeDiscount({
+        discount_type,
+        discount_value,
+        discount_start_at,
+        discount_end_at,
+        price: priceNumber,
+    });
+
+    // If price changed, revalidate any existing fixed discount not passed explicitly.
+    if (discount_type === undefined) {
+        const { data: current } = await supabase
+            .from("product_variants")
+            .select("discount_type, discount_value, price")
+            .eq("id", id)
+            .maybeSingle();
+        if (current?.discount_type === "fixed" && current.discount_value != null) {
+            if (Number(current.discount_value) >= priceNumber) {
+                throw new Error("الخصم الثابت لا يمكن أن يساوي أو يتجاوز السعر الجديد.");
+            }
+        }
+    }
+
+    const updatePayload = {
+        price: priceNumber,
+        stock_quantity: stock,
+        sku: cleanSku,
+        is_available: Boolean(is_available),
+    };
+
+    if (discount_type !== undefined) {
+        updatePayload.discount_type = normalizedDiscount.discount_type;
+        updatePayload.discount_value = normalizedDiscount.discount_value;
+        updatePayload.discount_start_at = normalizedDiscount.discount_start_at;
+        updatePayload.discount_end_at = normalizedDiscount.discount_end_at;
+    }
+
     const { error } = await supabase
         .from("product_variants")
-        .update({
-            price: priceNumber,
-            stock_quantity: stock,
-            sku: cleanSku,
-            is_available: Boolean(is_available),
-        })
+        .update(updatePayload)
         .eq("id", id);
 
     if (error) throw failure(error, "تعذر حفظ الـ variant");
@@ -439,7 +649,17 @@ const sameName = (a, b) =>
  */
 export async function addProductVariant(
     product,
-    { colorName, hex_code, sizeName, price, stock_quantity }
+    {
+        colorName,
+        hex_code,
+        sizeName,
+        price,
+        stock_quantity,
+        discount_type,
+        discount_value,
+        discount_start_at,
+        discount_end_at,
+    }
 ) {
     const typedColor = String(colorName ?? "").trim();
     const typedSize = String(sizeName ?? "").trim();
@@ -456,6 +676,14 @@ export async function addProductVariant(
     if (stock_quantity === "" || !Number.isInteger(stock) || stock < 0) {
         throw new Error("اكتب الكمية (رقم صحيح أكبر من أو يساوي صفر).");
     }
+
+    const normalizedDiscount = normalizeDiscount({
+        discount_type,
+        discount_value,
+        discount_start_at,
+        discount_end_at,
+        price: priceNumber,
+    });
 
     let color = product.colors.find((c) => sameName(c.name, typedColor));
     let size = product.sizes.find((z) => sameName(z.name, typedSize));
@@ -529,6 +757,10 @@ export async function addProductVariant(
             stock_quantity: stock,
             sku,
             is_available: true,
+            discount_type: normalizedDiscount.discount_type,
+            discount_value: normalizedDiscount.discount_value,
+            discount_start_at: normalizedDiscount.discount_start_at,
+            discount_end_at: normalizedDiscount.discount_end_at,
         });
 
         if (error) throw failure(error, "تعذر إضافة التوليفة");

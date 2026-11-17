@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { getPublishedProducts } from "../../services/productService";
+import { getListingPriceInfo } from "../../utils/pricing";
+import PriceTag from "../../components/store/PriceTag";
 import { normalizeCategorySlug } from "../../utils/categorySlug";
 
 export default function Products() {
@@ -109,15 +111,15 @@ export default function Products() {
         return [...result].sort((a, b) => {
             if (sortBy === "price-low") {
                 return (
-                    Number(a.base_price || 0) -
-                    Number(b.base_price || 0)
+                    getListingPriceInfo(a).effective -
+                    getListingPriceInfo(b).effective
                 );
             }
 
             if (sortBy === "price-high") {
                 return (
-                    Number(b.base_price || 0) -
-                    Number(a.base_price || 0)
+                    getListingPriceInfo(b).effective -
+                    getListingPriceInfo(a).effective
                 );
             }
 
@@ -429,12 +431,9 @@ export default function Products() {
                                                 {product.name}
                                             </h2>
 
-                                            <p className="mt-3 text-sm font-extrabold text-slate-900 sm:text-base">
-                                                {Number(
-                                                    product.base_price || 0
-                                                ).toFixed(2)}{" "}
-                                                EGP
-                                            </p>
+                                            <PriceTag
+                                                info={getListingPriceInfo(product)}
+                                            />
                                         </div>
                                     </Link>
                                 );

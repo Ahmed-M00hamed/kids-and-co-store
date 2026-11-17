@@ -164,16 +164,13 @@ export async function createOrder({
         throw new Error("Invalid shipping cost.");
     }
 
-    const orderItems = cart.map((item) => {
+    const items = cart.map((item) => {
         const quantity = Number(item.quantity);
-        const unitPrice = Number(item.price);
 
         if (
             item.variant_id == null ||
             !Number.isInteger(quantity) ||
-            quantity < 1 ||
-            !Number.isFinite(unitPrice) ||
-            unitPrice < 0
+            quantity < 1
         ) {
             throw new Error(
                 "One or more cart items contain invalid information."
@@ -181,89 +178,27 @@ export async function createOrder({
         }
 
         return {
-            variant_id: item.variant_id,
-            product_name: String(item.name || "Product"),
-            color_name: item.color_name || null,
-            size_name: item.size_name || null,
-            sku: item.sku || null,
-            unit_price: unitPrice,
+            variant_id: Number(item.variant_id),
             quantity,
-            line_total: Number((unitPrice * quantity).toFixed(2)),
         };
     });
 
-    const subtotal = Number(
-        orderItems
-            .reduce((sum, item) => sum + item.line_total, 0)
-            .toFixed(2)
-    );
+    const { data, error } = await supabase.rpc("submit_checkout_order", {
+        p_customer_name: customer_name.trim(),
+        p_customer_phone: customer_phone.trim(),
+        p_shipping_address: shipping_address.trim(),
+        p_shipping_city: shipping_city.trim(),
+        p_items: items,
+        p_customer_email: String(customer_email ?? "").trim() || null,
+        p_shipping_notes: String(shipping_notes ?? "").trim() || null,
+    });
 
-    const total = Number((subtotal + safeShippingCost).toFixed(2));
-
-    const orderNumber = `KC-${Date.now()}-${Math.floor(
-        1000 + Math.random() * 9000
-    )}`;
-
-    // Create the order first.
-    const { data: order, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-            order_number: orderNumber,
-            customer_name: customer_name.trim(),
-            customer_email: String(customer_email ?? "").trim() || null,
-            customer_phone: customer_phone.trim(),
-            shipping_address: shipping_address.trim(),
-            shipping_city: shipping_city.trim(),
-            shipping_notes: String(shipping_notes ?? "").trim() || null,
-            subtotal,
-            shipping_cost: safeShippingCost,
-            total,
-            status: "pending",
-            payment_method: "cash_on_delivery",
-            payment_status: "unpaid",
-        })
-        .select("id, order_number, total")
-        .single();
-
-    if (orderError) {
-        console.error("Error creating order:", orderError);
-        throw new Error("Unable to create your order. Please try again.");
+    if (error) {
+        console.error("Error creating order:", error);
+        throw new Error(error.message || "Unable to create your order. Please try again.");
     }
 
-    // Save the order's items.
-    const itemsToInsert = orderItems.map((item) => ({
-        ...item,
-        order_id: order.id,
-    }));
-
-    const { error: itemsError } = await supabase
-        .from("order_items")
-        .insert(itemsToInsert);
-
-    if (itemsError) {
-        console.error("Error creating order items:", itemsError);
-
-        // Attempt to remove the incomplete order.
-        // This can fail if the current Supabase RLS policies disallow deletion.
-        const { error: rollbackError } = await supabase
-            .from("orders")
-            .delete()
-            .eq("id", order.id);
-
-        if (rollbackError) {
-            console.error("Error removing incomplete order:", rollbackError);
-
-            throw new Error(
-                "Your order could not be completed. Please contact support before trying again."
-            );
-        }
-
-        throw new Error(
-            "We couldn't save the order items. Please try again."
-        );
-    }
-
-    return order;
+    return data;
 }
 
 const TRACKING_ERRORS = {

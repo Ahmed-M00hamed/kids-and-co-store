@@ -150,6 +150,14 @@ function Cart() {
 
                                         <p className="mt-2 font-medium text-slate-800">
                                             {formatPrice(item.price)}
+                                            {Number(item.original_price) >
+                                                Number(item.price) && (
+                                                <span className="ml-2 text-sm font-normal text-gray-400 line-through">
+                                                    {formatPrice(
+                                                        item.original_price
+                                                    )}
+                                                </span>
+                                            )}
                                         </p>
                                     </div>
 

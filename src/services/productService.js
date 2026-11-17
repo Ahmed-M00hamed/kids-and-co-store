@@ -9,6 +9,10 @@ export async function getPublishedProducts() {
       name,
       description,
       base_price,
+      discount_type,
+      discount_value,
+      discount_start_at,
+      discount_end_at,
       categories (id, name, slug),
       product_images (
         id,
@@ -16,6 +20,12 @@ export async function getPublishedProducts() {
         alt_text,
         sort_order,
         is_primary
+      ),
+      product_variants (
+        id,
+        price,
+        stock_quantity,
+        is_available
       )
     `)
         .eq("is_published", true)
@@ -37,6 +47,10 @@ export async function getPublishedProducts() {
                 return (a.sort_order ?? 0) - (b.sort_order ?? 0);
             }
         ),
+        variants: (product.product_variants ?? []).filter(
+            (variant) =>
+                variant.is_available && variant.stock_quantity > 0
+        ),
     }));
 }
 
@@ -49,6 +63,10 @@ export async function getProductById(id) {
       name,
       description,
       base_price,
+      discount_type,
+      discount_value,
+      discount_start_at,
+      discount_end_at,
       category_id,
       categories (
         id,
@@ -148,6 +166,10 @@ export async function getBestSellers(limit = 4) {
       id,
       name,
       base_price,
+      discount_type,
+      discount_value,
+      discount_start_at,
+      discount_end_at,
       categories (id, name, slug),
       product_images (
         id,
@@ -155,6 +177,12 @@ export async function getBestSellers(limit = 4) {
         alt_text,
         sort_order,
         is_primary
+      ),
+      product_variants (
+        id,
+        price,
+        stock_quantity,
+        is_available
       )
     `)
         .in("id", [...quantities.keys()])
@@ -169,6 +197,10 @@ export async function getBestSellers(limit = 4) {
         .map((product) => ({
             ...product,
             total_quantity: quantities.get(String(product.id)) ?? 0,
+            variants: (product.product_variants ?? []).filter(
+                (variant) =>
+                    variant.is_available && variant.stock_quantity > 0
+            ),
             images: [...(product.product_images ?? [])].sort((a, b) => {
                 if (a.is_primary !== b.is_primary) {
                     return a.is_primary ? -1 : 1;

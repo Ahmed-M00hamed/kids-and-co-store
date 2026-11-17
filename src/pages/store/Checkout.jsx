@@ -9,6 +9,8 @@ import {
     Truck,
 } from "lucide-react";
 import { createOrder } from "../../services/orderService";
+import { supabase } from "../../services/supabase";
+import { getEffectivePrice, getOriginalPrice } from "../../utils/pricing";
 
 const SHIPPING_COST = 0;
 
@@ -32,6 +34,64 @@ export default function Checkout() {
     const navigate = useNavigate();
 
     const [cart, setCart] = useState(getSavedCart);
+
+    const [priceChanges, setPriceChanges] = useState([]);
+    const [approving, setApproving] = useState(false);
+
+    async function revalidatePrices(currentCart) {
+        const items = currentCart ?? cart;
+        if (!items.length) {
+            setPriceChanges([]);
+            return;
+        }
+
+        const variantIds = [
+            ...new Set(items.map((item) => item.variant_id).filter(Boolean)),
+        ];
+
+        if (!variantIds.length) {
+            setPriceChanges([]);
+            return;
+        }
+
+        const { data, error } = await supabase
+            .from("product_variants")
+            .select(
+                "id, price, products (discount_type, discount_value, discount_start_at, discount_end_at)"
+            )
+            .in("id", variantIds);
+
+        if (error || !data) {
+            return;
+        }
+
+        const byId = new Map(data.map((variant) => [String(variant.id), variant]));
+
+        const changes = [];
+        for (const item of items) {
+            const variant = byId.get(String(item.variant_id));
+            if (!variant) continue;
+            const newPrice = getEffectivePrice(variant, variant.products);
+            const oldPrice = Number(item.price || 0);
+            if (Math.abs(newPrice - oldPrice) > 0.0001) {
+                changes.push({
+                    variant_id: item.variant_id,
+                    name: item.name,
+                    oldPrice,
+                    newPrice,
+                });
+            }
+        }
+
+        setPriceChanges(changes);
+    }
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            revalidatePrices(cart);
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [cart]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const [form, setForm] = useState({
         customer_name: "",
@@ -82,6 +142,54 @@ export default function Checkout() {
         }));
     }
 
+    async function handleApprovePrices() {
+        setApproving(true);
+        setError("");
+
+        try {
+            const { data } = await supabase
+                .from("product_variants")
+                .select(
+                    "id, price, products (discount_type, discount_value, discount_start_at, discount_end_at)"
+                )
+                .in(
+                    "id",
+                    priceChanges.map((change) => change.variant_id)
+                );
+
+            const byId = new Map((data ?? []).map((v) => [String(v.id), v]));
+
+            setCart((current) => {
+                const updated = current.map((item) => {
+                    const variant = byId.get(String(item.variant_id));
+                    if (!variant) return item;
+                    const newPrice = getEffectivePrice(variant, variant.products);
+                    const change = priceChanges.find(
+                        (c) => String(c.variant_id) === String(item.variant_id)
+                    );
+                    if (change && Math.abs(change.newPrice - newPrice) < 0.0001) {
+                        return {
+                            ...item,
+                            price: newPrice,
+                            original_price: getOriginalPrice(variant),
+                        };
+                    }
+                    return item;
+                });
+                localStorage.setItem("cart", JSON.stringify(updated));
+                window.dispatchEvent(new Event("cart-updated"));
+                return updated;
+            });
+
+            // Revalidate after approval.
+            setTimeout(() => revalidatePrices(), 0);
+        } catch {
+            setError("تعذر تحديث الأسعار. حاول مرة أخرى.");
+        } finally {
+            setApproving(false);
+        }
+    }
+
     async function handleSubmit(event) {
         event.preventDefault();
         setError("");
@@ -90,6 +198,13 @@ export default function Checkout() {
 
         if (cart.length === 0) {
             setError("Your cart is empty. Add products before checkout.");
+            return;
+        }
+
+        if (priceChanges.length > 0) {
+            setError(
+                "Some prices changed. Please review and approve the new prices before placing the order."
+            );
             return;
         }
 
@@ -476,6 +591,28 @@ export default function Checkout() {
                             <span>{formatPrice(total)}</span>
                         </div>
                     </div>
+
+                    {priceChanges.length > 0 && (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                            <p className="font-bold">Price changes detected</p>
+                            <ul className="mt-2 space-y-1">
+                                {priceChanges.map((change) => (
+                                    <li key={change.variant_id}>
+                                        {change.name}: {formatPrice(change.oldPrice)} →{" "}
+                                        {formatPrice(change.newPrice)}
+                                    </li>
+                                ))}
+                            </ul>
+                            <button
+                                type="button"
+                                onClick={handleApprovePrices}
+                                disabled={approving}
+                                className="mt-3 rounded-lg bg-amber-600 px-4 py-2 font-bold text-white disabled:opacity-60"
+                            >
+                                {approving ? "Approving..." : "Approve new prices"}
+                            </button>
+                        </div>
+                    )}
 
                     <button
                         type="submit"

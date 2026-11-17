@@ -12,6 +12,11 @@ import {
     Truck,
 } from "lucide-react";
 import { getProductById } from "../../services/productService";
+import {
+    getEffectivePrice,
+    getOriginalPrice,
+    getPriceInfo,
+} from "../../utils/pricing";
 
 const CART_KEY = "cart";
 
@@ -124,12 +129,19 @@ function ProductDetails() {
             (selectedSize === null || variant.size_id === selectedSize)
     );
 
-    const price = Number(
-        selectedVariant?.price ??
-        availableVariants[0]?.price ??
-        product?.base_price ??
-        0
-    );
+    const referenceVariant = selectedVariant ?? availableVariants[0] ?? null;
+
+    // Product-level discount applies to every variant's own price.
+    const priceInfo = referenceVariant
+        ? getPriceInfo(referenceVariant, product)
+        : {
+              original: Number(product?.base_price) || 0,
+              effective: Number(product?.base_price) || 0,
+              discounted: false,
+              percentOff: 0,
+          };
+
+    const price = priceInfo.effective;
 
     const currentImage = images[selectedImage];
 
@@ -193,7 +205,8 @@ function ProductDetails() {
             color_name: color?.name ?? "",
             size_id: selectedVariant.size_id,
             size_name: size?.name ?? "",
-            price: Number(selectedVariant.price ?? product.base_price),
+            price: getEffectivePrice(selectedVariant, product),
+            original_price: getOriginalPrice(selectedVariant),
             quantity,
             image_url:
                 currentImage?.image_url ??
@@ -403,6 +416,24 @@ function ProductDetails() {
                                 })}{" "}
                                 <span className="text-lg">EGP</span>
                             </p>
+
+                            {priceInfo.discounted && (
+                                <>
+                                    <p className="text-lg font-medium text-slate-400 line-through">
+                                        {priceInfo.original.toLocaleString(
+                                            "en-US",
+                                            {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                            }
+                                        )}{" "}
+                                        EGP
+                                    </p>
+                                    <span className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-600">
+                                        -{priceInfo.percentOff}%
+                                    </span>
+                                </>
+                            )}
 
                             <span className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-bold text-pink-600">
                                 Style and Comfort for Your Little One

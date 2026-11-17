@@ -2,6 +2,8 @@
 import { Link } from "react-router";
 import { useEffect, useState } from "react";
 import { getBestSellers } from "../../../services/productService";
+import PriceTag from "../PriceTag";
+import { getListingPriceInfo } from "../../../utils/pricing";
 
 export default function BestSellers() {
     const [products, setProducts] = useState([]);
@@ -122,9 +124,9 @@ export default function BestSellers() {
                                         {product.name}
                                     </h3>
 
-                                    <p className="mt-3 text-sm font-extrabold text-slate-900 sm:text-base">
-                                        {Number(product.base_price).toFixed(2)} EGP
-                                    </p>
+                                    <PriceTag
+                                        info={getListingPriceInfo(product)}
+                                    />
                                 </div>
                             </Link>
                         );
